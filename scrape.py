@@ -147,6 +147,11 @@ class TypstScraper:
         """Convert Typst documentation HTML to clean markdown."""
         soup = BeautifulSoup(html_content, 'html.parser')
 
+        # Remove unwanted elements
+        # Remove all div.tooltip-context
+        for tooltip in soup.find_all('div', class_='tooltip-context'):
+            tooltip.decompose()
+
         # Extract main content area
         main_content = soup.find('main')
         if not main_content:
@@ -161,12 +166,13 @@ class TypstScraper:
         title_text = self._extract_title(title_elem)
 
         # Start building markdown
-        markdown_lines = [f"# {title_text} – Typst Documentation\n"]
+        # Changed to match target: # block instead of # Block Function – Typst Documentation
+        markdown_lines = [f"# {title_text}\n"]
 
         # Process content sequentially
         processed_elements = set()
 
-        # Find all major sections
+        # Find all major sections (h1, h2)
         sections = main_content.find_all(['h1', 'h2'])
 
         for i, section in enumerate(sections):
@@ -215,6 +221,7 @@ class TypstScraper:
 
         while current and current != end_elem:
             if hasattr(current, 'name') and current.name:
+                # Stop if we hit a new major section (h1 or h2) that is not the start_elem itself
                 if current.name in ['h1', 'h2'] and current != start_elem:
                     break
                 content.append(current)
@@ -231,30 +238,39 @@ class TypstScraper:
         header_text = self._clean_text(header.get_text())
         header_level = int(header.name[1]) if header.name.startswith('h') else 2
 
-        # Handle special sections
-        if header.name == 'h1' and 'summary' in header_id:
-            lines.append("## Summary\n")
-        elif header_id == 'parameters':
-            lines.append("## Parameters\n")
-            # Process parameters section specially
-            param_content = self._process_parameters_section(content_elements)
-            if param_content:
-                lines.extend(param_content)
-            return lines
-        elif header_id == 'definitions':
-            lines.append("## Definitions\n")
-            lines.append("Functions and types and can have associated definitions. These are accessed by specifying the function or type, followed by a period, and then the definition's name.\n")
-            # Process definitions content
-            def_content = self._process_definitions_section(content_elements)
-            if def_content:
-                lines.extend(def_content)
-            return lines
-        elif header.name != 'h1':
+        # Only add header for h2 and below. h1 is handled by the document title.
+        if header.name != 'h1':
             lines.append(f"{'#' * header_level} {header_text}\n")
 
         # Process regular content
         for elem in content_elements:
-            if elem.name == 'p':
+            # Handle sub-headers for parameters/definitions (h3, h4)
+            if elem.name.startswith('h') and elem != header:
+                sub_header_level = int(elem.name[1])
+                code_elem = elem.find('code')
+                if code_elem:
+                    param_name = code_elem.get_text().strip()
+                    
+                    type_text = ""
+                    properties = []
+                    
+                    additional_info = elem.find('div', class_='additional-info')
+                    if additional_info:
+                        # Use the _extract_parameter_metadata method to get type and properties
+                        extracted_metadata = self._extract_parameter_metadata(additional_info)
+                        type_text = extracted_metadata[0]
+                        properties = extracted_metadata[1] # This will be a list of properties
+
+                    output_line = f"{'#' * sub_header_level} `{param_name}`"
+                    if type_text:
+                        output_line += f": {type_text}"
+                    
+                    if properties:
+                        output_line += f" ({', '.join(properties)})"
+                    
+                    lines.append(f"{output_line}\n")
+
+            elif elem.name == 'p':
                 text = self._process_paragraph(elem)
                 if text.strip():
                     lines.append(f"{text}\n")
@@ -264,6 +280,7 @@ class TypstScraper:
                 if code_block:
                     lines.append(f"{code_block}\n")
 
+            # Handle the function signature block (e.g., block(...) -> content)
             elif elem.name == 'div' and 'code-definition' in elem.get('class', []):
                 signature = self._process_function_signature(elem)
                 if signature:
@@ -356,30 +373,74 @@ class TypstScraper:
         
         # Check if this needs quadruple backticks
         if 'backticks' in code_text and 'Adding' in code_text:
-            return f"````typst\n{code_text}\n````"
+            return f"```typst\n{code_text}\n```"
 
         return f"```typst\n{code_text}\n```"
     
     def _process_function_signature(self, elem) -> Optional[str]:
         """Process function signature."""
-        signature_text = elem.get_text()
+        func_name_elem = elem.find('span', class_='typ-func')
+        if not func_name_elem:
+            return None
+        func_name = func_name_elem.get_text().strip()
         
-        # Clean up the signature
-        signature_text = re.sub(r'\s+', ' ', signature_text)
-        signature_text = re.sub(r'\s*,\s*', ', ', signature_text)
-        signature_text = re.sub(r'\s*:\s*', ': ', signature_text)
-        signature_text = re.sub(r'\s*\|\s*', ' | ', signature_text)
-        signature_text = re.sub(r'\s*->\s*', ' -> ', signature_text)
+        arguments_div = elem.find('div', class_='arguments')
+        if not arguments_div:
+            return None
         
-        # Fix first parameter if it's missing
-        if signature_text.startswith('raw(: '):
-            signature_text = signature_text.replace('raw(: ', 'raw(text: ', 1)
+        params = []
+        for param_span in arguments_div.find_all('span', class_='overview-param'):
+            param_name = ""
+            param_type_str = ""
+
+            # Try to get parameter name from the 'a' tag's text or href
+            param_name_link = param_span.find('a')
+            if param_name_link:
+                # Get name from text first
+                name_from_text = param_name_link.get_text().replace(':', '').strip()
+                if name_from_text:
+                    param_name = name_from_text
+                elif param_name_link.get('href'):
+                    # If text is empty, try to get from href (e.g., for 'body')
+                    href_id = param_name_link.get('href').lstrip('#')
+                    if href_id.startswith('parameters-'):
+                        param_name = href_id.replace('parameters-', '')
+
+            # Extract types for this parameter
+            types = []
+            # Iterate through children of param_span to find type elements (a or span.pill)
+            # and raw text that is not "or" or "|"
+            for child in param_span.children:
+                if hasattr(child, 'name'):
+                    if child.name == 'a' and 'pill' in child.get('class', []): # Only consider 'a' tags that are pills
+                        types.append(child.get_text().strip())
+                    elif child.name == 'span' and 'pill' in child.get('class', []):
+                        types.append(child.get_text().strip())
+                    elif child.name == 'small' and child.get_text().strip().lower() == 'or':
+                        # Ignore "or" text from small tags, it's handled by joining
+                        pass
+                elif isinstance(child, str) and child.strip() and child.strip().lower() not in ['or', '|']:
+                    types.append(child.strip())
+            
+            param_type_str = ' | '.join([t for t in types if t]) # Join with " | "
+
+            if param_name and param_type_str:
+                params.append(f"{param_name}: {param_type_str}")
+            elif param_type_str: # For cases where there's no explicit name but a type (e.g., last content parameter)
+                params.append(param_type_str)
+            elif param_name: # If only name is found, but no type (shouldn't happen for these signatures)
+                params.append(param_name)
+
+        # Find the return type (it's usually the last 'a' tag with class 'pill' outside the arguments div)
+        return_type_elem = elem.find_all('a', class_='pill')[-1] if elem.find_all('a', class_='pill') else None
+        return_type = return_type_elem.get_text().strip() if return_type_elem else ''
+
+        # Assemble the final signature string with proper indentation and newlines
+        formatted_params = ",\n  ".join(params)
         
-        signature_text = signature_text.strip()
-        
-        if signature_text:
-            return f"**Syntax:** `{signature_text}`"
-        return None
+        signature_text = f"{func_name}(\n  {formatted_params}\n) -> {return_type}"
+
+        return f"```\n{signature_text}\n```"
     
     def _process_example_details(self, elem) -> Optional[str]:
         """Process example in details element."""
@@ -410,101 +471,10 @@ class TypstScraper:
 
         return '\n'.join(items) if items else None
     
-    def _process_parameters_section(self, content_elements) -> List[str]:
-        """Process parameters section."""
-        lines = []
-
-        # Look for function signature first
-        for elem in content_elements:
-            if elem.name == 'div' and 'code-definition' in elem.get('class', []):
-                signature = self._process_function_signature(elem)
-                if signature:
-                    lines.append(f"{signature}\n")
-                break
-
-        # Process individual parameters
-        for elem in content_elements:
-            if elem.name == 'h3' and elem.get('id', '').startswith('parameters-'):
-                param_md = self._process_single_parameter(elem, content_elements)
-                if param_md:
-                    lines.extend(param_md)
-
-        return lines
-    
-    def _process_single_parameter(self, param_header, all_elements) -> List[str]:
-        """Process a single parameter."""
-        lines = []
-
-        # Extract parameter name
-        code_elem = param_header.find('code')
-        if not code_elem:
-            return lines
-
-        param_name = code_elem.get_text().strip()
-        lines.append(f"### `{param_name}`")
-
-        # Get metadata
-        additional_info = param_header.find_next_sibling('div', class_='additional-info')
-        if additional_info:
-            type_info = self._extract_parameter_metadata(additional_info)
-            if type_info:
-                lines.extend(type_info)
-
-        # Get description
-        current = param_header.next_sibling
-        description_lines = []
-        default_value = None
-        
-        while current:
-            if hasattr(current, 'name'):
-                if current.name == 'div' and 'additional-info' in current.get('class', []):
-                    current = current.next_sibling
-                    continue
-                    
-                if current.name in ['h3', 'h2'] and current.get('id', '').startswith(('parameters-', 'definitions-')):
-                    break
-                
-                if current.name == 'p':
-                    p_text = self._process_paragraph(current)
-                    if p_text.strip():
-                        # Check for default value
-                        default_match = re.search(r'Default:\s*`([^`]+)`', current.get_text())
-                        if default_match:
-                            default_value = default_match.group(1)
-                            if not p_text.replace(f"Default: `{default_value}`", "").strip():
-                                current = current.next_sibling
-                                continue
-                        description_lines.append(p_text)
-                
-                elif current.name == 'details':
-                    example = self._process_example_details(current)
-                    if example:
-                        description_lines.append(f"\n{example}")
-                
-                elif current.name in ['ul', 'ol']:
-                    list_content = self._process_list(current)
-                    if list_content:
-                        description_lines.append(list_content)
-            
-            current = current.next_sibling
-
-        # Add description
-        if description_lines:
-            lines.append("")
-            lines.extend(description_lines)
-
-        # Add default value if found
-        if default_value and not any('Default:' in line for line in lines):
-            insert_pos = len([l for l in lines if l.startswith('- **')]) + 1
-            if insert_pos < len(lines):
-                lines.insert(insert_pos, f"- **Default:** `{default_value}`")
-
-        lines.append("")
-        return lines
-    
     def _extract_parameter_metadata(self, info_elem) -> List[str]:
         """Extract parameter metadata."""
-        lines = []
+        type_text = ""
+        properties = []
 
         # Extract type information
         type_div = info_elem.find('div')
@@ -512,120 +482,20 @@ class TypstScraper:
             type_parts = []
             for elem in type_div.children:
                 if hasattr(elem, 'name'):
-                    if elem.name == 'a':
+                    if elem.name == 'a' or (elem.name == 'span' and 'pill' in elem.get('class', [])):
                         type_parts.append(elem.get_text().strip())
-                elif str(elem).strip():
+                elif str(elem).strip() and str(elem).strip().lower() not in ['or', '|']:
                     type_parts.append(str(elem).strip())
             
-            type_text = ' or '.join([t for t in type_parts if t and t not in ['or', '|']])
-            if type_text:
-                lines.append(f"- **Type:** `{type_text}`")
+            type_text = ' | '.join([t for t in type_parts if t])
 
         # Extract other properties
         for small in info_elem.find_all('small'):
             text = self._clean_text(small.get_text())
-            if text and text.lower() in ['required', 'settable', 'positional']:
-                lines.append(f"- **{text}**")
+            if text and text.lower() in ['required', 'settable', 'positional', 'variadic']:
+                properties.append(text)
 
-        return lines
-    
-    def _process_definitions_section(self, content_elements) -> List[str]:
-        """Process definitions section."""
-        lines = []
-
-        for elem in content_elements:
-            if elem.name == 'h3' and 'scoped-function' in elem.get('class', []):
-                def_content = self._process_definition_subsection(elem, content_elements)
-                if def_content:
-                    lines.extend(def_content)
-
-        return lines
-    
-    def _process_definition_subsection(self, def_header, all_elements) -> List[str]:
-        """Process a definition subsection."""
-        lines = []
-
-        # Extract definition name
-        code_elem = def_header.find('code')
-        if code_elem:
-            def_name = code_elem.get_text().strip()
-            lines.append(f"### `{def_name}`")
-
-            # Check for Element badge
-            if def_header.find('small'):
-                lines.append("*Element function*\n")
-
-        # Get content
-        current = def_header.next_sibling
-        description_paragraphs = []
-        
-        while current:
-            if hasattr(current, 'name'):
-                if current.name in ['h3', 'h2']:
-                    break
-                    
-                if current.name == 'p':
-                    desc = self._process_paragraph(current)
-                    if desc.strip() and desc not in description_paragraphs:
-                        description_paragraphs.append(desc)
-
-                elif current.name == 'div' and 'code-definition' in current.get('class', []):
-                    # Add descriptions first
-                    for desc in description_paragraphs[:2]:  # Limit to avoid duplicates
-                        lines.append(f"{desc}\n")
-                    
-                    signature = self._process_function_signature(current)
-                    if signature:
-                        lines.append(f"{signature}\n")
-                    
-                    description_paragraphs = []  # Clear after using
-
-                elif current.name == 'h4' and current.get('id', '').startswith('definitions-'):
-                    param_content = self._process_definition_parameter(current)
-                    if param_content:
-                        lines.extend(param_content)
-
-            current = current.next_sibling
-
-        return lines
-    
-    def _process_definition_parameter(self, param_header) -> List[str]:
-        """Process a parameter within a definition."""
-        lines = []
-
-        # Extract parameter name
-        code_elem = param_header.find('code')
-        if code_elem:
-            param_name = code_elem.get_text().strip()
-            lines.append(f"#### `{param_name}`")
-
-            # Get metadata
-            additional_info = param_header.find_next_sibling('div', class_='additional-info')
-            if additional_info:
-                type_info = self._extract_parameter_metadata(additional_info)
-                if type_info:
-                    lines.extend(type_info)
-
-            # Get description
-            current = param_header.next_sibling
-            while current:
-                if hasattr(current, 'name'):
-                    if current.name == 'div' and 'additional-info' in current.get('class', []):
-                        current = current.next_sibling
-                        continue
-                        
-                    if current.name in ['h4', 'h3', 'h2']:
-                        break
-                        
-                    if current.name == 'p':
-                        desc = self._process_paragraph(current)
-                        if desc.strip():
-                            lines.append(f"\n{desc}\n")
-                            break
-                        
-                current = current.next_sibling
-
-        return lines
+        return [type_text, properties] # Return as a list: [type_string, [prop1, prop2]]
     
     async def scrape_page(self, url: str) -> ScrapeResult:
         """Scrape a single page."""
