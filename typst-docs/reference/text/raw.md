@@ -1,6 +1,4 @@
-# raw – Typst Documentation
-
-## Summary
+# raw
 
 Raw text with optional syntax highlighting.
 
@@ -41,11 +39,21 @@ When you use three or more backticks, you can additionally specify a language ta
 
 The language tag is an identifier that directly follows the opening backticks only if there are three or more backticks. If your text starts with something that looks like an identifier, but no syntax highlighting is needed, start the text with a single space (which will be trimmed) or use the single backtick syntax. If your text should start or end with a backtick, put a space before or after it (it will be trimmed).
 
-## ParametersQuestion markParameters are the inputs to a function. They are specified in parentheses after the function name.
+## Parameters
 
-**Syntax:** `raw(str,block: bool,lang: nonestr,align: alignment,syntaxes: strbytesarray,theme: noneautostrbytes,tab-size: int,) -> content`
+```
+raw(
+  str: str,
+  block: bool,
+  lang: none | str,
+  align: alignment,
+  syntaxes: str | bytes | array,
+  theme: none | auto | str | bytes,
+  tab-size: int
+) -> content
+```
 
-### textstrRequiredPositionalQuestion markPositional parameters are specified in order, without names.
+### `text`: str (Required, Positional)
 
 The raw text.
 
@@ -68,7 +76,7 @@ You can also use raw blocks creatively to create custom syntaxes for your automa
 ```
 ```
 
-### blockboolSettableQuestion markSettable parameters can be customized for all following uses of the function with a set rule.
+### `block`: bool (Settable)
 
 Whether the raw text is displayed as a separate block.
 
@@ -104,7 +112,7 @@ rg "Hello World"
 ```
 ```
 
-### langnone or strSettableQuestion markSettable parameters can be customized for all following uses of the function with a set rule.
+### `lang`: none | str (Settable)
 
 The language to syntax-highlight in.
 
@@ -121,7 +129,7 @@ This is *Typst!*
 This is ```typ also *Typst*```, but inline!
 ```
 
-### alignalignmentSettableQuestion markSettable parameters can be customized for all following uses of the function with a set rule.
+### `align`: alignment (Settable)
 
 The horizontal alignment that each line in a raw block should have. This option is ignored if this is not a raw block (if specified `block: false` or single backticks were used in markup mode).
 
@@ -139,7 +147,7 @@ code = "centered"
 ```
 ```
 
-### syntaxesstr or bytes or arraySettableQuestion markSettable parameters can be customized for all following uses of the function with a set rule.
+### `syntaxes`: str | bytes | array (Settable)
 
 Additional syntax definitions to load. The syntax definitions should be in the [sublime-syntax file format](https://www.sublimetext.com/docs/syntax.html).
 
@@ -164,7 +172,7 @@ Default: `()`
 ```
 ```
 
-### themenone or auto or str or bytesSettableQuestion markSettable parameters can be customized for all following uses of the function with a set rule.
+### `theme`: none | auto | str | bytes (Settable)
 
 The theme to use for syntax highlighting. Themes should be in the [tmTheme file format](https://www.sublimetext.com/docs/color_schemes_tmtheme.html).
 
@@ -195,7 +203,7 @@ Default: `auto`
 ```
 ```
 
-### tab-sizeintSettableQuestion markSettable parameters can be customized for all following uses of the function with a set rule.
+### `tab-size`: int (Settable)
 
 The size for a tab stop in spaces. A tab is replaced with enough spaces to align with the next multiple of the size.
 
@@ -212,7 +220,9 @@ Year	Month	Day
 ```
 ```
 
-### lineElementQuestion markElement functions can be customized with set and show rules.
+## Definitions
+
+### `line`
 
 A highlighted line of raw text.
 
@@ -220,25 +230,27 @@ This is a helper element that is synthesized by [raw](/docs/reference/text/raw/)
 
 It allows you to access various properties of the line, such as the line number, the raw non-highlighted text, the highlighted text, and whether it is the first or last line of the raw block.
 
-**Syntax:** `raw.line(int,int,str,content,) -> content`
+```
+line(
+  int: int,
+  int: int,
+  str: str,
+  content: content
+) -> content
+```
 
-#### numberintRequiredPositionalQuestion markPositional parameters are specified in order, without names.
+#### `number`: int (Required, Positional)
 
 The line number of the raw line inside of the raw block, starts at 1.
 
-#### countintRequiredPositionalQuestion markPositional parameters are specified in order, without names.
+#### `count`: int (Required, Positional)
 
 The total number of lines in the raw block.
 
-#### textstrRequiredPositionalQuestion markPositional parameters are specified in order, without names.
+#### `text`: str (Required, Positional)
 
 The line of raw text.
 
-#### bodycontentRequiredPositionalQuestion markPositional parameters are specified in order, without names.
+#### `body`: content (Required, Positional)
 
 The highlighted raw text.
-
-
----
-
-*This documentation is for Typst, a modern markup language for typesetting.*

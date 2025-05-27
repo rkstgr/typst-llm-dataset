@@ -194,10 +194,6 @@ class TypstScraper:
             processed_elements.add(section)
             processed_elements.update(section_content)
 
-        # Add footer
-        markdown_lines.append("\n---\n")
-        markdown_lines.append("*This documentation is for Typst, a modern markup language for typesetting.*")
-
         return "\n".join(markdown_lines)
     
     def _extract_title(self, title_elem) -> str:
