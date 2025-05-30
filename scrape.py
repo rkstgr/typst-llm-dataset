@@ -135,16 +135,16 @@ class TypstScraper:
             # Create file path
             file_path = self.output_dir / Path(*path_parts)
             
-            # Ensure it ends with .md
+            # Ensure it ends with .typ (changed from .md)
             if not file_path.suffix:
-                file_path = file_path.with_suffix('.md')
+                file_path = file_path.with_suffix('.typ')
             
             return file_path
         
-        return self.output_dir / "index.md"
+        return self.output_dir / "index.typ" # Changed from .md
     
     def convert_html_to_markdown(self, html_content: str) -> str:
-        """Convert Typst documentation HTML to clean markdown."""
+        """Convert Typst documentation HTML to Typst markup."""
         soup = BeautifulSoup(html_content, 'html.parser')
 
         # Remove unwanted elements
@@ -165,9 +165,9 @@ class TypstScraper:
         # Extract title text, handling code elements and badges
         title_text = self._extract_title(title_elem)
 
-        # Start building markdown
-        # Changed to match target: # block instead of # Block Function – Typst Documentation
-        markdown_lines = [f"# {title_text}\n"]
+        # Start building Typst markup
+        # Changed to Typst heading syntax: = Heading
+        markdown_lines = [f"= {title_text}\n"]
 
         # Process content sequentially
         processed_elements = set()
@@ -229,14 +229,13 @@ class TypstScraper:
         """Process a section with all its content."""
         lines = []
 
-        # Extract header info
-        header_id = header.get('id', '')
         header_text = self._clean_text(header.get_text())
         header_level = int(header.name[1]) if header.name.startswith('h') else 2
 
         # Only add header for h2 and below. h1 is handled by the document title.
         if header.name != 'h1':
-            lines.append(f"{'#' * header_level} {header_text}\n")
+            # Changed to Typst heading syntax: = Heading
+            lines.append(f"{'=' * header_level} {header_text}\n")
 
         # Process regular content
         for elem in content_elements:
@@ -257,7 +256,7 @@ class TypstScraper:
                         type_text = extracted_metadata[0]
                         properties = extracted_metadata[1] # This will be a list of properties
 
-                    output_line = f"{'#' * sub_header_level} `{param_name}`"
+                    output_line = f"{'=' * sub_header_level} `{param_name}`" # Changed to Typst heading syntax
                     if type_text:
                         output_line += f": {type_text}"
                     
@@ -324,13 +323,13 @@ class TypstScraper:
                     link_text = content.get_text()
                     href = content.get('href', '')
                     if href and 'tooltip' not in link_text.lower():
-                        text += f"[{link_text}]({href})"
+                        text += f"#link(\"{href}\")[{link_text}]"
                     else:
                         text += link_text
                 elif content.name == 'em':
-                    text += f"*{content.get_text()}*"
+                    text += f"_{content.get_text()}_" # Changed to Typst italic syntax
                 elif content.name == 'strong':
-                    text += f"**{content.get_text()}**"
+                    text += f"*{content.get_text()}*" # Changed to Typst bold syntax
                 elif content.name in ['div', 'span'] and 'tooltip' in content.get('class', []):
                     continue  # Skip tooltip content
                 else:
@@ -367,7 +366,9 @@ class TypstScraper:
         
         code_text = '\n'.join(cleaned_lines)
         
-        # Check if this needs quadruple backticks
+        # Typst raw blocks use backticks, similar to Markdown.
+        # The `typst` language specifier is also standard.
+        # So, this part remains largely the same.
         if 'backticks' in code_text and 'Adding' in code_text:
             return f"```typst\n{code_text}\n```"
 
@@ -452,7 +453,7 @@ class TypstScraper:
         if code_div:
             code_block = self._process_code_block(code_div)
             if code_block:
-                return f"**{title}:**\n{code_block}"
+                return f"*{title}:*\n{code_block}"
 
         return None
     
@@ -586,39 +587,39 @@ class TypstScraper:
     
     def create_index(self):
         """Create an index file of all scraped documents."""
-        index_path = self.output_dir / "INDEX.md"
+        index_path = self.output_dir / "INDEX.typ" # Changed from .md
         
         with open(index_path, 'w') as f:
-            f.write("# Typst Documentation Index\n\n")
+            f.write("= Typst Documentation Index\n\n") # Changed to Typst heading
             f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
             # Organize by directory
             files_by_dir = defaultdict(list)
             
-            for md_file in self.output_dir.rglob("*.md"):
-                if md_file.name in ["INDEX.md", ".scraper_state.json"]:
+            for typ_file in self.output_dir.rglob("*.typ"): # Changed from .md
+                if typ_file.name in ["INDEX.typ", ".scraper_state.json"]: # Changed from .md
                     continue
                 
-                rel_path = md_file.relative_to(self.output_dir)
+                rel_path = typ_file.relative_to(self.output_dir)
                 dir_path = rel_path.parent
                 files_by_dir[dir_path].append(rel_path)
             
             # Write organized index
             for dir_path in sorted(files_by_dir.keys()):
                 if str(dir_path) != ".":
-                    f.write(f"\n## {dir_path}\n\n")
+                    f.write(f"\n== {dir_path}\n\n") # Changed to Typst heading
                 
                 for file_path in sorted(files_by_dir[dir_path]):
                     title = file_path.stem.replace('-', ' ').title()
                     f.write(f"- [{title}]({file_path})\n")
             
             # Stats
-            f.write(f"\n## Statistics\n\n")
+            f.write(f"\n== Statistics\n\n") # Changed to Typst heading
             f.write(f"- Total pages: {len(self.visited_urls)}\n")
             f.write(f"- Failed pages: {len(self.failed_urls)}\n")
             
             if self.failed_urls:
-                f.write(f"\n### Failed URLs\n\n")
+                f.write(f"\n=== Failed URLs\n\n") # Changed to Typst heading
                 for url, error in self.failed_urls.items():
                     f.write(f"- {url}\n")
                     f.write(f"  - Error: {error[:100]}...\n")
