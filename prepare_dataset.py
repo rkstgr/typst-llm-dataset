@@ -160,7 +160,7 @@ class DatasetPreparer:
                     # Create JSONL entry
                     entry = {
                         "file_path": str(file_path),
-                        "content": content
+                        "text": content
                     }
 
                     # Write to JSONL file
