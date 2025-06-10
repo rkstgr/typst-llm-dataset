@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
 Generate Q&A instruction pairs from Typst forum topics using LiteLLM.
-Usage: python generate-qa-pair.py <topic.json>
+Usage: python generate-qa-pair.py <dir_or_path> --output <output_dir> [options]
 """
 
 import json
 import os
 import sys
 import argparse
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 import litellm
 
 # Set default model via environment variable
@@ -22,10 +25,13 @@ def load_topic_data(filepath: str) -> Dict:
             return json.load(f)
     except Exception as e:
         print(f"Error loading file {filepath}: {e}")
-        sys.exit(1)
+        return None
 
 def extract_question_and_answer(topic_data: Dict) -> Optional[Dict]:
     """Extract the main question and accepted answer from topic data."""
+    if not topic_data:
+        return None
+
     metadata = topic_data.get('topic_metadata', {})
     posts = topic_data.get('posts', [])
 
@@ -76,11 +82,12 @@ Generate a Q&A pair following these guidelines:
 5. Ensure the answer is self-contained and practical
 6. Use proper markdown formatting with ```typ code blocks for Typst code
 
-Return ONLY a JSON object with this exact structure:
-{{
-  "question": "Clear question text here",
-  "answer": "Complete answer with code examples here"
-}}
+Return markdown with this exact structure:
+# Question
+Clear question text here
+
+# Answer
+Complete answer with code examples here
 """
     return prompt
 
@@ -99,19 +106,43 @@ def generate_qa_pair(topic_data: Dict, model: str = DEFAULT_MODEL) -> Optional[D
         answer_post,
         metadata.get('title', '')
     )
-
+    response_text = ""
     try:
         response = litellm.completion(
-                    model=model,
-                    messages=[
-                        {"role": "user", "content": prompt},
-                        {"role": "assistant", "content": "{\"question\": \""}
-                    ],
-                    temperature=0.3,
-                )
+            model=model,
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": "# Question\n"}
+            ],
+            temperature=0.3,
+        )
 
-        response_text = "{\"question\": \"" + response.choices[0].message.content
-        qa_content = json.loads(response_text)
+        response_text = "# Question\n" + response.choices[0].message.content
+
+        # Implemented TODO: construct qa_content from response_text
+        # Find markers to robustly parse the response
+        q_marker = "# Question"
+        a_marker = "# Answer"
+
+        q_start_pos = response_text.find(q_marker)
+        if q_start_pos == -1:
+            raise ValueError("Could not find '# Question' marker.")
+
+        a_start_pos = response_text.find(a_marker, q_start_pos)
+        if a_start_pos == -1:
+            raise ValueError("Could not find '# Answer' marker after '# Question'.")
+
+        # Extract content based on marker positions
+        question_content = response_text[q_start_pos + len(q_marker):a_start_pos].strip()
+        answer_content = response_text[a_start_pos + len(a_marker):].strip()
+
+        if not question_content or not answer_content:
+            raise ValueError("Extracted question or answer content is empty.")
+
+        qa_content = {
+            "question": question_content,
+            "answer": answer_content
+        }
 
         # Build the final output structure
         output = {
@@ -139,40 +170,117 @@ def generate_qa_pair(topic_data: Dict, model: str = DEFAULT_MODEL) -> Optional[D
         return output
 
     except Exception as e:
-        print(f"Error generating Q&A pair: {e}: ", response.choices[0].message.content)
+        print(f"Error generating Q&A pair for topic {metadata.get('id', 'unknown')}: {e}. Response text: {response_text}")
         return None
 
-def main():
-    parser = argparse.ArgumentParser(description='Generate Q&A pairs from Typst forum topics')
-    parser.add_argument('input_file', help='Input JSON file containing topic data')
-    parser.add_argument('--model', default=DEFAULT_MODEL, help=f'LLM model to use (default: {DEFAULT_MODEL})')
+def process_single_file(input_path: Path, output_dir: Path, suffix: str, model: str) -> tuple[str, bool, str]:
+    """Process a single JSON file and return (filename, success, message)."""
+    topic_data = load_topic_data(str(input_path))
 
-    args = parser.parse_args()
-
-    # Load topic data
-    topic_data = load_topic_data(args.input_file)
+    if not topic_data:
+        return (input_path.name, False, "Failed to load file")
 
     # Check if topic has accepted answer
     if not topic_data.get('topic_metadata', {}).get('has_accepted_answer'):
-        print(f"Error: Topic does not have an accepted answer. Skipping.")
-        sys.exit(1)
+        return (input_path.name, False, "No accepted answer")
 
     # Generate Q&A pair
-    print(f"Using model: {args.model}")
-    print(f"Processing topic: {topic_data.get('topic_metadata', {}).get('title', 'Unknown')}")
-
-    qa_pair = generate_qa_pair(topic_data, args.model)
+    qa_pair = generate_qa_pair(topic_data, model)
 
     if not qa_pair:
-        print("Failed to generate Q&A pair")
-        sys.exit(1)
+        return (input_path.name, False, "Failed to generate Q&A pair")
+
+    # Determine output filename
+    if suffix == "none":
+        output_filename = input_path.stem + ".json"
+    else:
+        output_filename = input_path.stem + suffix + ".json"
+
+    output_path = output_dir / output_filename
 
     # Save output
-    output_filename = args.input_file.replace('.json', '-qa.json')
-    with open(output_filename, 'w', encoding='utf-8') as f:
-        json.dump(qa_pair, f, indent=2, ensure_ascii=False)
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(qa_pair, f, indent=2, ensure_ascii=False)
+        return (input_path.name, True, f"Saved to {output_filename}")
+    except Exception as e:
+        return (input_path.name, False, f"Failed to save: {e}")
 
-    print(f"Successfully generated Q&A pair: {output_filename}")
+def get_json_files(path: str) -> List[Path]:
+    """Get all JSON files from a path (directory or single file)."""
+    path_obj = Path(path)
+
+    if path_obj.is_file() and path_obj.suffix == '.json':
+        return [path_obj]
+    elif path_obj.is_dir():
+        return sorted(path_obj.glob('*.json'))
+    else:
+        return []
+
+def main():
+    parser = argparse.ArgumentParser(description='Generate Q&A pairs from Typst forum topics')
+    parser.add_argument('input_path', help='Input JSON file or directory containing JSON files')
+    parser.add_argument('--output', required=True, help='Output directory for Q&A pairs')
+    parser.add_argument('--suffix', default='-qa', help='Suffix for output files (use "none" for no suffix)')
+    parser.add_argument('--model', default=DEFAULT_MODEL, help=f'LLM model to use (default: {DEFAULT_MODEL})')
+    parser.add_argument('--concurrency', type=int, default=5, help='Number of concurrent LLM calls (default: 5)')
+
+    args = parser.parse_args()
+
+    # Validate and create output directory
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get all JSON files to process
+    json_files = get_json_files(args.input_path)
+
+    if not json_files:
+        print(f"No JSON files found in {args.input_path}")
+        sys.exit(1)
+
+    print(f"Found {len(json_files)} JSON files to process")
+    print(f"Using model: {args.model}")
+    print(f"Output directory: {output_dir}")
+    print(f"Concurrency: {args.concurrency}")
+
+    # Process files with concurrency
+    successful = 0
+    failed = 0
+    skipped = 0
+
+    with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+        # Submit all tasks
+        future_to_file = {
+            executor.submit(process_single_file, file_path, output_dir, args.suffix, args.model): file_path
+            for file_path in json_files
+        }
+
+        # Process results with progress bar
+        with tqdm(total=len(json_files), desc="Processing topics") as pbar:
+            for future in as_completed(future_to_file):
+                filename, success, message = future.result()
+
+                if success:
+                    successful += 1
+                    tqdm.write(f"✓ {filename}: {message}")
+                else:
+                    if "No accepted answer" in message:
+                        skipped += 1
+                        tqdm.write(f"⊘ {filename}: {message}")
+                    else:
+                        failed += 1
+                        tqdm.write(f"✗ {filename}: {message}")
+
+                pbar.update(1)
+
+    # Final summary
+    print("\n" + "="*60)
+    print("PROCESSING COMPLETED")
+    print(f"Successfully processed: {successful} files")
+    print(f"Skipped (no accepted answer): {skipped} files")
+    print(f"Failed: {failed} files")
+    print(f"Total: {len(json_files)} files")
+    print("="*60)
 
 if __name__ == "__main__":
     main()
