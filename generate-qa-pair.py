@@ -173,8 +173,20 @@ def generate_qa_pair(topic_data: Dict, model: str = DEFAULT_MODEL) -> Optional[D
         print(f"Error generating Q&A pair for topic {metadata.get('id', 'unknown')}: {e}. Response text: {response_text}")
         return None
 
-def process_single_file(input_path: Path, output_dir: Path, suffix: str, model: str) -> tuple[str, bool, str]:
+def process_single_file(input_path: Path, output_dir: Path, suffix: str, model: str, skip_existing: bool = True) -> tuple[str, bool, str]:
     """Process a single JSON file and return (filename, success, message)."""
+    # Determine output filename
+    if suffix == "none":
+        output_filename = input_path.stem + ".json"
+    else:
+        output_filename = input_path.stem + suffix + ".json"
+
+    output_path = output_dir / output_filename
+
+    # Skip if output already exists
+    if skip_existing and output_path.exists():
+        return (input_path.name, True, f"Already exists: {output_filename}")
+
     topic_data = load_topic_data(str(input_path))
 
     if not topic_data:
@@ -189,14 +201,6 @@ def process_single_file(input_path: Path, output_dir: Path, suffix: str, model: 
 
     if not qa_pair:
         return (input_path.name, False, "Failed to generate Q&A pair")
-
-    # Determine output filename
-    if suffix == "none":
-        output_filename = input_path.stem + ".json"
-    else:
-        output_filename = input_path.stem + suffix + ".json"
-
-    output_path = output_dir / output_filename
 
     # Save output
     try:
@@ -224,6 +228,7 @@ def main():
     parser.add_argument('--suffix', default='-qa', help='Suffix for output files (use "none" for no suffix)')
     parser.add_argument('--model', default=DEFAULT_MODEL, help=f'LLM model to use (default: {DEFAULT_MODEL})')
     parser.add_argument('--concurrency', type=int, default=5, help='Number of concurrent LLM calls (default: 5)')
+    parser.add_argument('--force', action='store_true', help='Force regeneration of existing Q&A pairs')
 
     args = parser.parse_args()
 
@@ -251,7 +256,7 @@ def main():
     with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
         # Submit all tasks
         future_to_file = {
-            executor.submit(process_single_file, file_path, output_dir, args.suffix, args.model): file_path
+            executor.submit(process_single_file, file_path, output_dir, args.suffix, args.model, not args.force): file_path
             for file_path in json_files
         }
 
