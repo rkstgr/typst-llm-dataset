@@ -21,3 +21,11 @@ Create eval dataset file
 ```sh
 python llmify.py ./eval/*.typ --output eval.jsonl
 ```
+
+# Scrape forum questions
+```sh
+python scrape-forum.py
+python scrape-forum-posts.py
+
+python generate-qa-pair.py typst-forum/questions --output dataset/qa --suffix=none
+```
