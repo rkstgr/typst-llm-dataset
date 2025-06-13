@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import List, Set, Tuple
 import glob
 import re
+from typing import Optional
 
 
 class DatasetPreparer:
@@ -39,7 +40,7 @@ class DatasetPreparer:
             # Fallback for non-standard versions
             return (0,)
 
-    def find_latest_version(self, package_dir: Path) -> Path:
+    def find_latest_version(self, package_dir: Path) -> Optional[Path]:
         """Find the directory with the latest version in a package."""
         version_dirs = []
 
@@ -112,7 +113,7 @@ class DatasetPreparer:
 
         return docs_files
 
-    def read_file_content(self, file_path: Path) -> str:
+    def read_file_content(self, file_path: Path) -> Optional[str]:
         """Read file content with proper encoding handling."""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:

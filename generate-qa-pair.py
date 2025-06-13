@@ -76,11 +76,11 @@ Accepted Answer (by {answer_post.get('username', 'unknown')}):
 
 Generate a Q&A pair following these guidelines:
 1. Create a clear, concise question that captures the main problem
-2. Provide a comprehensive answer with code examples if relevant
-3. Focus only on the main issue, not side discussions
-4. Remove forum-specific content (user mentions, links to other posts)
-5. Ensure the answer is self-contained and practical
-6. Use proper markdown formatting with ```typ code blocks for Typst code
+2. Focus on the main issue, not side discussions
+3. Remove forum-specific content (user mentions, links to other posts)
+4. Ensure the answer is self-contained and practical
+5. Use proper markdown formatting with ```typ code blocks for Typst code
+6. Do not include an explanation if not prompted by the user.
 
 Return markdown with this exact structure:
 # Question
